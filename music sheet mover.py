@@ -2,6 +2,11 @@ import pygame
 import pretty_midi
 import time
 import os
+try:
+    import pygame.midi
+    PYGAME_MIDI_AVAILABLE = True
+except Exception:
+    PYGAME_MIDI_AVAILABLE = False
 
 # -----------------------------
 # Configuration
@@ -53,6 +58,19 @@ dropdown_y = 5
 dropdown_w = 400
 dropdown_h = 28
 
+# mapping from target MIDI pitches (C4..B4) to replacement MIDI pitch
+# default empty (no mapping)
+mapped_notes = {}
+
+# midi output (if available)
+midi_out = None
+if PYGAME_MIDI_AVAILABLE:
+    try:
+        pygame.midi.init()
+        midi_out = pygame.midi.Output(pygame.midi.get_default_output_id())
+    except Exception:
+        midi_out = None
+
 # -----------------------------
 # Helper functions
 # -----------------------------
@@ -91,14 +109,16 @@ def run_main_menu():
     menu_y = dropdown_y + 40
 
     while menu_open:
+        # prepare rects so events can reference them
+        dd_rect = pygame.Rect(dropdown_x, menu_y, dropdown_w, dropdown_h)
+        ok_rect = pygame.Rect(dd_rect.x + dd_rect.w + 20, dd_rect.y, 80, dropdown_h)
+        quit_rect = pygame.Rect(dd_rect.x + dd_rect.w + 110, dd_rect.y, 80, dropdown_h)
+
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 return None
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = ev.pos
-                dd_rect = pygame.Rect(dropdown_x, menu_y, dropdown_w, dropdown_h)
-                ok_rect = pygame.Rect(dropdown_x + dropdown_w + 20, menu_y, 80, dropdown_h)
-                quit_rect = pygame.Rect(dropdown_x + dropdown_w + 110, menu_y, 80, dropdown_h)
 
                 # Dropdown click
                 if dd_rect.collidepoint(mx, my):
@@ -106,7 +126,7 @@ def run_main_menu():
                 elif local_dropdown_open:
                     clicked_item = False
                     for idx, fname in enumerate(midi_files):
-                        item_rect = pygame.Rect(dropdown_x, menu_y + (idx+1) * dropdown_h, dropdown_w, dropdown_h)
+                        item_rect = pygame.Rect(dd_rect.x, dd_rect.y + (idx+1) * dropdown_h, dropdown_w, dropdown_h)
                         if item_rect.collidepoint(mx, my):
                             # select but don't exit until OK
                             local_selected = fname
@@ -129,7 +149,6 @@ def run_main_menu():
         screen.blit(title, ((SCREEN_WIDTH - title.get_width())//2, 20))
 
         # dropdown
-        dd_rect = pygame.Rect(dropdown_x, menu_y, dropdown_w, dropdown_h)
         pygame.draw.rect(screen, (240,240,240), dd_rect)
         pygame.draw.rect(screen, (0,0,0), dd_rect, 2)
         sel_text = local_selected if local_selected else 'No MIDI files'
@@ -137,8 +156,6 @@ def run_main_menu():
         screen.blit(txt, (dd_rect.x + 6, dd_rect.y + 6))
 
         # OK and Quit buttons
-        ok_rect = pygame.Rect(dd_rect.x + dd_rect.w + 20, dd_rect.y, 80, dropdown_h)
-        quit_rect = pygame.Rect(dd_rect.x + dd_rect.w + 110, dd_rect.y, 80, dropdown_h)
         pygame.draw.rect(screen, (100,200,100), ok_rect)
         pygame.draw.rect(screen, (200,100,100), quit_rect)
         ok_txt = font.render('OK', True, (0,0,0))
@@ -162,20 +179,139 @@ def run_main_menu():
         clock.tick(30)
 
 
+def run_mapping_screen():
+    """Screen to assign mapped MIDI notes for each pitch that appears in the MIDI.
+    Each note starts mapped to itself. Click a cell to cycle through possible replacement notes.
+    Play button tests the tone (via MIDI out if available).
+    """
+    # Use all available MIDI notes as both targets and options
+    targets = list(range(48, 84))  # C3 to B5
+    target_names = [midi_to_name(p) for p in targets]
+
+    # Same range for replacement options
+    options = targets.copy()
+    option_names = target_names.copy()
+
+    # Start with each note mapped to itself (index is position in options list)
+    sel_indices = {t: (options.index(mapped_notes[t]) if t in mapped_notes else options.index(t)) for t in targets}
+
+    mapping_open = True
+    while mapping_open:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return
+            elif ev.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = ev.pos
+                # Back and Save buttons
+                back_rect = pygame.Rect(LEFT_MARGIN, SCREEN_HEIGHT - 60, 120, 36)
+                save_rect = pygame.Rect(LEFT_MARGIN + 140, SCREEN_HEIGHT - 60, 120, 36)
+                if back_rect.collidepoint(mx, my):
+                    return
+                if save_rect.collidepoint(mx, my):
+                    # write selections into mapped_notes
+                    for t in targets:
+                        idx = sel_indices.get(t, -1)
+                        if idx >= 0:
+                            mapped_notes[t] = options[idx]
+                        elif t in mapped_notes:
+                            del mapped_notes[t]
+                    print('Mappings saved:', mapped_notes)
+                    return
+
+                # click on mapping cells to cycle
+                # layout cells in a grid
+                cell_width = 140
+                cells_per_row = max(1, min(6, (SCREEN_WIDTH - LEFT_MARGIN*2) // (cell_width + 20)))
+                for i, t in enumerate(targets):
+                    row = i // cells_per_row
+                    col = i % cells_per_row
+                    cell_x = LEFT_MARGIN + col * (cell_width + 20)
+                    cell_y = 120 + row * 60
+                    cell_rect = pygame.Rect(cell_x, cell_y, 120, 40)
+                    if cell_rect.collidepoint(mx, my):
+                        # cycle index
+                        idx = sel_indices.get(t, -1) + 1
+                        if idx >= len(options):
+                            idx = -1
+                        sel_indices[t] = idx
+                        break
+                # play test area click
+                play_rect = pygame.Rect(SCREEN_WIDTH - 140, SCREEN_HEIGHT - 60, 120, 36)
+                if play_rect.collidepoint(mx, my):
+                    # play all mapped notes briefly
+                    if midi_out:
+                        for t, idx in sel_indices.items():
+                            if idx >= 0:
+                                outp = options[idx]
+                                midi_out.note_on(outp, 100)
+                        pygame.time.delay(300)
+                        for t, idx in sel_indices.items():
+                            if idx >= 0:
+                                outp = options[idx]
+                                midi_out.note_off(outp, 0)
+
+        # draw mapping UI
+        screen.fill((50, 50, 60))
+        title = pygame.font.SysFont(None, 36).render('Map Notes (Default: Each note maps to itself)', True, (255,255,255))
+        screen.blit(title, (LEFT_MARGIN, 40))
+
+        # draw cells in rows and columns for all targets
+        cell_width = 140
+        cells_per_row = max(1, min(6, (SCREEN_WIDTH - LEFT_MARGIN*2) // (cell_width + 20)))
+        for i, t in enumerate(targets):
+            row = i // cells_per_row
+            col = i % cells_per_row
+            cell_x = LEFT_MARGIN + col * (cell_width + 20)  # add spacing between cells
+            cell_y = 120 + row * 60  # spacing between rows
+            # target label
+            lbl = font.render(target_names[i], True, (255,255,255))
+            screen.blit(lbl, (cell_x, cell_y - 30))
+            # selection box
+            cell_rect = pygame.Rect(cell_x, cell_y, 120, 40)
+            pygame.draw.rect(screen, (220,220,220), cell_rect)
+            pygame.draw.rect(screen, (0,0,0), cell_rect, 1)
+            idx = sel_indices.get(t, -1)
+            text = option_names[idx] if idx >= 0 else 'None'
+            txt = font.render(text, True, (0,0,0))
+            screen.blit(txt, (cell_x + 8, cell_y + 10))
+
+        # buttons
+        back_rect = pygame.Rect(LEFT_MARGIN, SCREEN_HEIGHT - 60, 120, 36)
+        save_rect = pygame.Rect(LEFT_MARGIN + 140, SCREEN_HEIGHT - 60, 120, 36)
+        play_rect = pygame.Rect(SCREEN_WIDTH - 140, SCREEN_HEIGHT - 60, 120, 36)
+        pygame.draw.rect(screen, (200,100,100), back_rect)
+        pygame.draw.rect(screen, (100,200,100), save_rect)
+        pygame.draw.rect(screen, (120,160,240), play_rect)
+        screen.blit(font.render('Back', True, (0,0,0)), (back_rect.x + 30, back_rect.y + 8))
+        screen.blit(font.render('Save', True, (0,0,0)), (save_rect.x + 30, save_rect.y + 8))
+        screen.blit(font.render('Play Test', True, (0,0,0)), (play_rect.x + 8, play_rect.y + 8))
+
+        pygame.display.flip()
+        clock.tick(30)
+
+
 # -----------------------------
 # Main loop
 # -----------------------------
-# Show main menu first
-menu_choice = run_main_menu()
-if menu_choice is None:
-    pygame.quit()
-    raise SystemExit(0)
+# Show main menu first; allow mapping screen to be opened from menu
+while True:
+    menu_choice = run_main_menu()
+    if menu_choice is None:
+        pygame.quit()
+        raise SystemExit(0)
+    # user selected a file (or re-selected the same one) -> load it and go to mapping
+    if menu_choice:
+        selected_midi = menu_choice
+        MIDI_PATH = os.path.join(MIDI_DIR, selected_midi)
+        try:
+            pm, notes, lowest_pitch, highest_pitch, midi_end_time, NUM_KEYS = load_midi(MIDI_PATH)
+        except Exception as e:
+            print('Failed to load MIDI from menu:', e)
+            continue
 
-# if user picked a file from menu, load it
-if menu_choice and menu_choice != selected_midi:
-    selected_midi = menu_choice
-    MIDI_PATH = os.path.join(MIDI_DIR, selected_midi)
-    pm, notes, lowest_pitch, highest_pitch, midi_end_time, NUM_KEYS = load_midi(MIDI_PATH)
+        # always go to fixed C4/D4 mapping screen
+        run_mapping_screen()
+        break
 
 app_active = True
 
@@ -185,6 +321,8 @@ while app_active:
     running = True
     end_timer_started = False
     end_timer_start = 0
+    # tracking currently playing pitches for mapping playback
+    prev_playing = set()
 
     while running:
         dt = clock.tick(60) / 1000
@@ -261,12 +399,37 @@ while app_active:
         playhead_x = SCREEN_WIDTH // 2
         pygame.draw.line(screen, (255,0,0), (playhead_x, 0), (playhead_x, SCREEN_HEIGHT), 2)
 
-        # Draw notes as black circles
+        # First compute currently playing pitches
+        playing_pitches = set()
         for note in notes:
+            if note['start'] <= current_time <= note['end']:
+                playing_pitches.add(note['pitch'])
             note_x = playhead_x + (note['start'] - current_time) * PIXELS_PER_SECOND
             note_y = pitch_to_y(note['pitch'])
             if 0 <= note_x <= SCREEN_WIDTH:
                 pygame.draw.circle(screen, (0,0,0), (int(note_x), int(note_y)), NOTE_RADIUS)
+
+        # detect note-on / note-off events for mapping playback
+        new_on = playing_pitches - prev_playing
+        new_off = prev_playing - playing_pitches
+        # handle note-ons
+        if midi_out:
+            for p in new_on:
+                if p in mapped_notes:
+                    try:
+                        midi_out.note_on(int(mapped_notes[p]), 100)
+                    except Exception:
+                        pass
+        # handle note-offs
+        if midi_out:
+            for p in new_off:
+                if p in mapped_notes:
+                    try:
+                        midi_out.note_off(int(mapped_notes[p]), 0)
+                    except Exception:
+                        pass
+
+        prev_playing = playing_pitches
 
         # Draw current time and total duration
         time_text = f"Time: {current_time:.2f} / {midi_end_time:.2f} s"
@@ -298,13 +461,14 @@ while app_active:
     if menu_choice is None:
         # user chose to quit from main menu
         break
-    # if the user selected a different file, load it
-    if menu_choice and menu_choice != selected_midi:
+    # load the selected file (even if it's the same) and show mapping before playback
+    if menu_choice:
         selected_midi = menu_choice
         MIDI_PATH = os.path.join(MIDI_DIR, selected_midi)
         try:
             pm, notes, lowest_pitch, highest_pitch, midi_end_time, NUM_KEYS = load_midi(MIDI_PATH)
-            # restart playback loop automatically
+            run_mapping_screen()
+            # restart playback loop automatically with new selection/mapping
             continue
         except Exception as e:
             print('Failed to load selected MIDI from menu:', e)
