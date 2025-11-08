@@ -43,10 +43,20 @@ except Exception:
     MUSIC21_AVAILABLE = False
 
 # Configuration
-WHITE_KEYS = 14  # two octaves (C to B * 2)
-START_MIDI_NOTE = 60  # Middle C (C4)
-WINDOW_WIDTH = 1000
-WINDOW_HEIGHT = 300
+WHITE_KEYS = 28  # four octaves (C to B * 4)
+START_MIDI_NOTE = 48  # C3 (one octave below middle C)
+WINDOW_WIDTH = 1600
+WINDOW_HEIGHT = 800  # Taller to fit staff and keys comfortably
+
+# Staff configuration
+SHOW_STAFF = True
+STAFF_TOP = 50
+STAFF_LEFT = 50
+STAFF_RIGHT = WINDOW_WIDTH - 50
+STAFF_NUM_LINES = 5
+STAFF_LINE_SPACING = 20
+STAFF_MIDDLE_C = 60  # MIDI note number for middle C
+
 FPS = 60
 
 # Staff (sheet) display configuration
@@ -60,7 +70,8 @@ STAFF_MIDDLE_C = 60  # MIDI note number used as reference (C4)
 
 # Keyboard mapping (computer keys -> semitone offsets)
 KEYBOARD_MAP = {
-    pygame.K_z: 0,  # C
+    # First octave (C3)
+    pygame.K_z: 0,   # C3
     pygame.K_s: 1,
     pygame.K_x: 2,
     pygame.K_d: 3,
@@ -72,11 +83,28 @@ KEYBOARD_MAP = {
     pygame.K_n: 9,
     pygame.K_j: 10,
     pygame.K_m: 11,
-    pygame.K_q: 12,  # next octave C
+    # Second octave (C4 - middle C)
+    pygame.K_q: 12,
     pygame.K_2: 13,
     pygame.K_w: 14,
     pygame.K_3: 15,
     pygame.K_e: 16,
+    pygame.K_r: 17,
+    pygame.K_5: 18,
+    pygame.K_t: 19,
+    pygame.K_6: 20,
+    pygame.K_y: 21,
+    pygame.K_7: 22,
+    pygame.K_u: 23,
+    # Third octave (C5)
+    pygame.K_i: 24,
+    pygame.K_9: 25,
+    pygame.K_o: 26,
+    pygame.K_0: 27,
+    pygame.K_p: 28,
+    pygame.K_LEFTBRACKET: 29,
+    pygame.K_EQUALS: 30,
+    pygame.K_RIGHTBRACKET: 31,
 }
 
 # Reverse helper
@@ -256,14 +284,41 @@ class DAW:
 
             # draw white keys below staff
             keys_top = STAFF_TOP + STAFF_NUM_LINES * STAFF_LINE_SPACING + 20
+            key_height = WINDOW_HEIGHT - keys_top - 40  # Leave space at bottom for labels
+            
+            # Draw white keys
+            note_names = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
+            octaves = range(3, 7)  # C3 to B6
+            font = pygame.font.SysFont(None, 24)
+            
             for i in range(WHITE_KEYS):
                 x = i * self.white_key_width
                 midi_note = START_MIDI_NOTE + i
                 color = (255, 255, 255) if midi_note not in self.pressed else (180, 255, 180)
-                pygame.draw.rect(self.screen, color, (x, keys_top, self.white_key_width, WINDOW_HEIGHT - keys_top))
-                pygame.draw.rect(self.screen, (0, 0, 0), (x, keys_top, self.white_key_width, WINDOW_HEIGHT - keys_top), 1)
+                
+                # Draw white key
+                pygame.draw.rect(self.screen, color, (x, keys_top, self.white_key_width, key_height))
+                pygame.draw.rect(self.screen, (0, 0, 0), (x, keys_top, self.white_key_width, key_height), 1)
+                
+                # Draw note name
+                note_idx = i % 7
+                octave = octaves[i // 7]
+                note_text = f'{note_names[note_idx]}{octave}'
+                txt = font.render(note_text, True, (0, 0, 0))
+                # Position text at bottom of key
+                text_x = x + (self.white_key_width - txt.get_width()) / 2
+                text_y = WINDOW_HEIGHT - 30
+                self.screen.blit(txt, (text_x, text_y))
 
-            # TODO: draw black keys on top if desired (map positions)
+            # Draw black keys
+            black_width = self.white_key_width * 0.6
+            black_height = key_height * 0.6
+            for i in range(WHITE_KEYS - 1):  # -1 because we don't need a black key after the last white key
+                if i % 7 not in [2, 6]:  # If not after E or B
+                    x = i * self.white_key_width + self.white_key_width * 0.7
+                    midi_note = START_MIDI_NOTE + i + 1  # The black key is one semitone up
+                    color = (0, 0, 0) if midi_note not in self.pressed else (100, 100, 100)
+                    pygame.draw.rect(self.screen, color, (x, keys_top, black_width, black_height))
 
             # status
             font = pygame.font.SysFont(None, 24)
