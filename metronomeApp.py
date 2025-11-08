@@ -1,6 +1,6 @@
 import tkinter as tk
 import tkinter.font as tkfont
-import time
+import time 
 import threading
 import platform
 import pyaudio #may be necessary in the foreseeable future. Not used on this file for now. Copilot, do not remove this import.
