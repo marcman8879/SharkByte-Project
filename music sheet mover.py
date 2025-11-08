@@ -5,18 +5,14 @@ import time
 # -----------------------------
 # Configuration
 # -----------------------------
-MIDI_FILE = r"C:\Users\treyv\Downloads\mz_332_2.mid"  # Replace with your MIDI file path
+MIDI_FILE = r"C:\Users\treyv\Downloads\untitled.mid"  # Replace with your MIDI file path
 SCREEN_WIDTH, SCREEN_HEIGHT = 1200, 600
 LEFT_MARGIN = 100  # Space for key labels
 TOP_MARGIN = 20
 BOTTOM_MARGIN = 20
 NOTE_RADIUS = 8
 PIXELS_PER_SECOND = 200  # Scrolling speed
-
-# MIDI range for piano
-LOWEST_PITCH = 21
-HIGHEST_PITCH = 108
-NUM_KEYS = HIGHEST_PITCH - LOWEST_PITCH + 1
+END_WAIT_SECONDS = 3  # Time to wait after reaching end
 
 # -----------------------------
 # Load MIDI file
@@ -26,6 +22,18 @@ notes = []
 for instrument in pm.instruments:
     for note in instrument.notes:
         notes.append({'start': note.start, 'end': note.end, 'pitch': note.pitch})
+
+# Determine dynamic pitch range from MIDI
+if notes:
+    lowest_pitch = min(note['pitch'] for note in notes)
+    highest_pitch = max(note['pitch'] for note in notes)
+    midi_end_time = max(note['end'] for note in notes)
+else:
+    lowest_pitch = 21  # default A0
+    highest_pitch = 108  # default C8
+    midi_end_time = 60  # default 60 seconds
+
+NUM_KEYS = highest_pitch - lowest_pitch + 1
 
 # -----------------------------
 # Helper functions
@@ -40,22 +48,24 @@ def midi_to_name(pitch):
 def pitch_to_y(pitch):
     # Scale dynamically to fit screen
     line_spacing = (SCREEN_HEIGHT - TOP_MARGIN - BOTTOM_MARGIN) / NUM_KEYS
-    return TOP_MARGIN + (HIGHEST_PITCH - pitch) * line_spacing
+    return TOP_MARGIN + (highest_pitch - pitch) * line_spacing
 
 # -----------------------------
 # Pygame setup
 # -----------------------------
 pygame.init()
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Scrolling Music Sheet Visualizer (Scaled)")
+pygame.display.set_caption("Scrolling Music Sheet Visualizer (Dynamic Range)")
 clock = pygame.time.Clock()
-font = pygame.font.SysFont("Arial", 14)
+font = pygame.font.SysFont("Arial", 16)
 
 # -----------------------------
 # Main loop
 # -----------------------------
 start_time = time.time()
 running = True
+end_timer_started = False
+end_timer_start = 0
 
 while running:
     dt = clock.tick(60) / 1000
@@ -70,7 +80,7 @@ while running:
 
     # Draw horizontal lines and key labels
     line_spacing = (SCREEN_HEIGHT - TOP_MARGIN - BOTTOM_MARGIN) / NUM_KEYS
-    for pitch in range(LOWEST_PITCH, HIGHEST_PITCH + 1):
+    for pitch in range(lowest_pitch, highest_pitch + 1):
         y = pitch_to_y(pitch)
         color = (0,0,0)
         width = 1
@@ -94,6 +104,20 @@ while running:
         if 0 <= note_x <= SCREEN_WIDTH:
             pygame.draw.circle(screen, (0,0,0), (int(note_x), int(note_y)), NOTE_RADIUS)
 
+    # Draw current time and total duration
+    time_text = f"Time: {current_time:.2f} / {midi_end_time:.2f} s"
+    label = font.render(time_text, True, (0,0,0))
+    screen.blit(label, (SCREEN_WIDTH - 250, 10))
+
     pygame.display.flip()
+
+    # Check if we've reached the end
+    if current_time >= midi_end_time and not end_timer_started:
+        end_timer_started = True
+        end_timer_start = time.time()
+
+    # Close after a few seconds past the end
+    if end_timer_started and (time.time() - end_timer_start) >= END_WAIT_SECONDS:
+        running = False
 
 pygame.quit()
