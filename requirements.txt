@@ -1,5 +1,6 @@
 pretty_midi
 pygame
 music21
-
 pyaudio==0.2.14
+simpleaudio
+numpy
