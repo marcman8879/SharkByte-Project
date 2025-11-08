@@ -8,6 +8,12 @@ try:
 except Exception:
     PYGAME_MIDI_AVAILABLE = False
 
+try:
+    import fluidsynth
+    FLUIDSYNTH_AVAILABLE = True
+except Exception:
+    FLUIDSYNTH_AVAILABLE = False
+
 # -----------------------------
 # Configuration
 # -----------------------------
@@ -62,14 +68,26 @@ dropdown_h = 28
 # default empty (no mapping)
 mapped_notes = {}
 
-# midi output (if available)
+# MIDI/audio output setup
 midi_out = None
+fs = None
+sf2_path = None
+current_preset = 0
+
 if PYGAME_MIDI_AVAILABLE:
     try:
         pygame.midi.init()
         midi_out = pygame.midi.Output(pygame.midi.get_default_output_id())
     except Exception:
         midi_out = None
+
+if FLUIDSYNTH_AVAILABLE:
+    try:
+        fs = fluidsynth.Synth()
+        fs.start()
+    except Exception as e:
+        print("FluidSynth error:", e)
+        fs = None
 
 # -----------------------------
 # Helper functions
@@ -178,6 +196,95 @@ def run_main_menu():
         pygame.display.flip()
         clock.tick(30)
 
+
+def run_sf2_selection():
+    """Screen to select an SF2 file and choose a preset from it."""
+    global sf2_path, current_preset, fs
+
+    if not FLUIDSYNTH_AVAILABLE or not fs:
+        print("FluidSynth not available")
+        return
+
+    screen.fill((50, 50, 60))
+    title = pygame.font.SysFont(None, 36).render('Select SF2 File', True, (255,255,255))
+    screen.blit(title, (LEFT_MARGIN, 40))
+
+    # File selection button
+    select_rect = pygame.Rect(LEFT_MARGIN, 100, 200, 40)
+    pygame.draw.rect(screen, (200,200,200), select_rect)
+    select_txt = font.render('Choose SF2 File...', True, (0,0,0))
+    screen.blit(select_txt, (select_rect.x + 10, select_rect.y + 10))
+
+    if sf2_path:
+        # Show current SF2 file
+        txt = font.render(f'Current: {os.path.basename(sf2_path)}', True, (255,255,255))
+        screen.blit(txt, (LEFT_MARGIN, 160))
+
+        # Previous/Next preset buttons
+        prev_rect = pygame.Rect(LEFT_MARGIN, 200, 100, 40)
+        next_rect = pygame.Rect(LEFT_MARGIN + 120, 200, 100, 40)
+        pygame.draw.rect(screen, (200,200,200), prev_rect)
+        pygame.draw.rect(screen, (200,200,200), next_rect)
+        screen.blit(font.render('< Prev', True, (0,0,0)), (prev_rect.x + 10, prev_rect.y + 10))
+        screen.blit(font.render('Next >', True, (0,0,0)), (next_rect.x + 10, next_rect.y + 10))
+
+        # Show current preset name if available
+        try:
+            preset_name = fs.channel_info(0)[3] if fs else f"Preset {current_preset}"
+            txt = font.render(f'Current Preset: {preset_name}', True, (255,255,255))
+            screen.blit(txt, (LEFT_MARGIN, 260))
+        except:
+            pass
+
+    pygame.display.flip()
+
+    selecting = True
+    while selecting:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return
+            elif ev.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = ev.pos
+                
+                if select_rect.collidepoint(mx, my):
+                    # Open file dialog (you might need to implement this differently)
+                    from tkinter import filedialog, Tk
+                    root = Tk()
+                    root.withdraw()
+                    new_sf2 = filedialog.askopenfilename(
+                        title="Select SF2 File",
+                        filetypes=[("SoundFont Files", "*.sf2")]
+                    )
+                    if new_sf2:
+                        sf2_path = new_sf2
+                        try:
+                            if fs:
+                                fs.delete()
+                            fs = fluidsynth.Synth()
+                            fs.start()
+                            sfid = fs.sfload(sf2_path)
+                            fs.program_select(0, sfid, 0, 0)
+                            current_preset = 0
+                            return  # Successfully loaded
+                        except Exception as e:
+                            print("Error loading SF2:", e)
+                
+                if sf2_path:
+                    if prev_rect.collidepoint(mx, my):
+                        current_preset = max(0, current_preset - 1)
+                        try:
+                            sfid = fs.sfload(sf2_path)
+                            fs.program_select(0, sfid, 0, current_preset)
+                        except Exception as e:
+                            print("Error changing preset:", e)
+                    
+                    elif next_rect.collidepoint(mx, my):
+                        current_preset += 1
+                        try:
+                            sfid = fs.sfload(sf2_path)
+                            fs.program_select(0, sfid, 0, current_preset)
+                        except Exception as e:
+                            print("Error changing preset:", e)
 
 def run_mapping_screen():
     """Screen to assign mapped MIDI notes for each pitch that appears in the MIDI.
@@ -299,7 +406,7 @@ while True:
     if menu_choice is None:
         pygame.quit()
         raise SystemExit(0)
-    # user selected a file (or re-selected the same one) -> load it and go to mapping
+    # user selected a file (or re-selected the same one) -> load it, choose SF2, then mapping
     if menu_choice:
         selected_midi = menu_choice
         MIDI_PATH = os.path.join(MIDI_DIR, selected_midi)
@@ -309,7 +416,11 @@ while True:
             print('Failed to load MIDI from menu:', e)
             continue
 
-        # always go to fixed C4/D4 mapping screen
+        # First select SF2 and preset
+        if FLUIDSYNTH_AVAILABLE:
+            run_sf2_selection()
+        
+        # Then go to mapping screen
         run_mapping_screen()
         break
 
@@ -412,7 +523,7 @@ while app_active:
         # detect note-on / note-off events for mapping playback
         new_on = playing_pitches - prev_playing
         new_off = prev_playing - playing_pitches
-        # handle note-ons
+        # handle note-ons using either MIDI out or FluidSynth
         if midi_out:
             for p in new_on:
                 if p in mapped_notes:
@@ -420,6 +531,14 @@ while app_active:
                         midi_out.note_on(int(mapped_notes[p]), 100)
                     except Exception:
                         pass
+        elif fs and sf2_path:  # Use FluidSynth if available
+            for p in new_on:
+                pitch = mapped_notes.get(p, p)  # Use mapped note or original if not mapped
+                try:
+                    fs.noteon(0, int(pitch), 100)
+                except Exception as e:
+                    print("FluidSynth note on error:", e)
+
         # handle note-offs
         if midi_out:
             for p in new_off:
@@ -428,6 +547,13 @@ while app_active:
                         midi_out.note_off(int(mapped_notes[p]), 0)
                     except Exception:
                         pass
+        elif fs and sf2_path:  # Use FluidSynth if available
+            for p in new_off:
+                pitch = mapped_notes.get(p, p)  # Use mapped note or original if not mapped
+                try:
+                    fs.noteoff(0, int(pitch))
+                except Exception as e:
+                    print("FluidSynth note off error:", e)
 
         prev_playing = playing_pitches
 
@@ -467,6 +593,12 @@ while app_active:
         MIDI_PATH = os.path.join(MIDI_DIR, selected_midi)
         try:
             pm, notes, lowest_pitch, highest_pitch, midi_end_time, NUM_KEYS = load_midi(MIDI_PATH)
+            
+            # First select SF2 and preset
+            if FLUIDSYNTH_AVAILABLE:
+                run_sf2_selection()
+            
+            # Then mapping screen
             run_mapping_screen()
             # restart playback loop automatically with new selection/mapping
             continue
