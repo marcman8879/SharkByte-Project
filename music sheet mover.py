@@ -17,14 +17,26 @@ except Exception:
 # -----------------------------
 # Configuration
 # -----------------------------
-MIDI_FILE = r"C:\Users\godzi\Downloads\untitled.mid"  # Replace with your MIDI file path
-SCREEN_WIDTH, SCREEN_HEIGHT = 1200, 600
+MIDI_FILE = r"C:\Users\treyv\Downloads\untitled.mid" # Replace with your MIDI file path
+
+# Default window size (will adjust if fullscreen)
+DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT = 1200, 600
+SCREEN_WIDTH, SCREEN_HEIGHT = DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT
 LEFT_MARGIN = 100  # Space for key labels
-TOP_MARGIN = 20
+TOP_MARGIN = 40   # Increased to give more space for controls
 BOTTOM_MARGIN = 20
 NOTE_RADIUS = 8
 PIXELS_PER_SECOND = 200  # Scrolling speed
 END_WAIT_SECONDS = 3  # Time to wait after reaching end
+
+# UI States and Dimensions
+is_fullscreen = False
+dropdown_padding = 8  # Padding around dropdown
+time_display_width = 200  # Width for time display area
+button_width = 80  # Standard button width
+button_height = 30  # Standard button height
+dropdown_height = 30  # Standard height for dropdown
+menu_spacing = 16   # Vertical spacing between menu elements
 
 # -----------------------------
 # MIDI loading utility
@@ -94,6 +106,35 @@ if FLUIDSYNTH_AVAILABLE:
 # -----------------------------
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
+def toggle_fullscreen():
+    """Toggle between fullscreen and windowed mode."""
+    global screen, is_fullscreen, SCREEN_WIDTH, SCREEN_HEIGHT
+    is_fullscreen = not is_fullscreen
+    if is_fullscreen:
+        # Store current window position to restore later
+        window_pos = screen.get_pos() if hasattr(screen, 'get_pos') else (100, 100)
+        # Switch to fullscreen
+        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        SCREEN_WIDTH, SCREEN_HEIGHT = screen.get_size()
+    else:
+        # Return to windowed mode at original size
+        screen = pygame.display.set_mode((DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT))
+        SCREEN_WIDTH, SCREEN_HEIGHT = DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT
+        if hasattr(screen, 'set_pos'):
+            screen.set_pos(window_pos)
+
+def calculate_ui_dimensions():
+    """Calculate UI element dimensions based on current screen size."""
+    # Set dropdown width and height
+    dropdown_w = min(300, SCREEN_WIDTH - 2 * dropdown_padding - time_display_width - dropdown_padding)
+    dropdown_h = button_height  # Match standard button height
+
+    # Position dropdown on top left, leaving space for time display
+    dropdown_x = dropdown_padding + time_display_width + dropdown_padding
+    dropdown_y = dropdown_padding  # Align with time display
+
+    return dropdown_x, dropdown_y, dropdown_w, dropdown_h
+
 def midi_to_name(pitch):
     octave = (pitch // 12) - 1
     name = NOTE_NAMES[pitch % 12]
@@ -123,14 +164,24 @@ def run_main_menu():
     menu_open = True
     local_dropdown_open = False
     local_selected = selected_midi
-    # place the menu dropdown a bit higher on the screen
-    menu_y = dropdown_y + 40
+    
+    # Calculate menu positions
+    menu_y = SCREEN_HEIGHT // 3  # Position menu 1/3 down the screen
+    button_spacing = 20
+    button_width = 80
+    button_height = 28
 
     while menu_open:
-        # prepare rects so events can reference them
-        dd_rect = pygame.Rect(dropdown_x, menu_y, dropdown_w, dropdown_h)
-        ok_rect = pygame.Rect(dd_rect.x + dd_rect.w + 20, dd_rect.y, 80, dropdown_h)
-        quit_rect = pygame.Rect(dd_rect.x + dd_rect.w + 110, dd_rect.y, 80, dropdown_h)
+        # Calculate dropdown position
+        dd_rect = pygame.Rect((SCREEN_WIDTH - dropdown_w) // 2, menu_y, dropdown_w, dropdown_h)
+        
+        # Calculate button positions (centered below dropdown)
+        total_button_width = (2 * button_width) + button_spacing
+        button_start_x = (SCREEN_WIDTH - total_button_width) // 2
+        button_y = menu_y + dropdown_h + button_spacing
+        
+        ok_rect = pygame.Rect(button_start_x, button_y, button_width, button_height)
+        quit_rect = pygame.Rect(button_start_x + button_width + button_spacing, button_y, button_width, button_height)
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -164,22 +215,30 @@ def run_main_menu():
         screen.fill((40, 40, 40))
         title_font = pygame.font.SysFont(None, 40)
         title = title_font.render('Music Sheet Mover - Select MIDI', True, (255,255,255))
-        screen.blit(title, ((SCREEN_WIDTH - title.get_width())//2, 20))
+        title_y = menu_y - 60  # Position title above dropdown
+        screen.blit(title, ((SCREEN_WIDTH - title.get_width())//2, title_y))
 
-        # dropdown
+        # Dropdown with light background and border
         pygame.draw.rect(screen, (240,240,240), dd_rect)
         pygame.draw.rect(screen, (0,0,0), dd_rect, 2)
         sel_text = local_selected if local_selected else 'No MIDI files'
-        txt = font.render(f'{sel_text}', True, (0,0,0))
-        screen.blit(txt, (dd_rect.x + 6, dd_rect.y + 6))
+        txt = font.render(f'Selected: {sel_text}', True, (0,0,0))
+        txt_x = dd_rect.x + (dd_rect.w - txt.get_width()) // 2  # Center text in dropdown
+        screen.blit(txt, (txt_x, dd_rect.y + 6))
 
-        # OK and Quit buttons
-        pygame.draw.rect(screen, (100,200,100), ok_rect)
-        pygame.draw.rect(screen, (200,100,100), quit_rect)
-        ok_txt = font.render('OK', True, (0,0,0))
-        quit_txt = font.render('Quit', True, (0,0,0))
-        screen.blit(ok_txt, (ok_rect.x + (ok_rect.w - ok_txt.get_width())/2, ok_rect.y + 6))
-        screen.blit(quit_txt, (quit_rect.x + (quit_rect.w - quit_txt.get_width())/2, quit_rect.y + 6))
+        # OK and Quit buttons with consistent styling
+        for btn_rect, btn_text, btn_color in [
+            (ok_rect, 'OK', (100,200,100)),
+            (quit_rect, 'Quit', (200,100,100))
+        ]:
+            # Draw button background and border
+            pygame.draw.rect(screen, btn_color, btn_rect)
+            pygame.draw.rect(screen, (0,0,0), btn_rect, 1)
+            # Draw centered text
+            btn_txt = font.render(btn_text, True, (0,0,0))
+            text_x = btn_rect.x + (btn_rect.w - btn_txt.get_width()) // 2
+            text_y = btn_rect.y + (btn_rect.h - btn_txt.get_height()) // 2
+            screen.blit(btn_txt, (text_x, text_y))
 
         # dropdown list if open
         if local_dropdown_open:
@@ -203,11 +262,21 @@ def run_sf2_selection():
 
     if not FLUIDSYNTH_AVAILABLE or not fs:
         print("FluidSynth not available")
-        return
+        return 'menu'
 
+    # Draw initial screen
     screen.fill((50, 50, 60))
     title = pygame.font.SysFont(None, 36).render('Select SF2 File', True, (255,255,255))
     screen.blit(title, (LEFT_MARGIN, 40))
+
+    # Draw back button
+    back_rect = pygame.Rect(SCREEN_WIDTH - 90 - dropdown_padding, dropdown_padding, 80, button_height)
+    pygame.draw.rect(screen, (200,200,200), back_rect)
+    pygame.draw.rect(screen, (0,0,0), back_rect, 1)
+    back_text = font.render("Back", True, (0,0,0))
+    back_x = back_rect.x + (back_rect.w - back_text.get_width()) // 2
+    back_y = back_rect.y + (back_rect.h - back_text.get_height()) // 2
+    screen.blit(back_text, (back_x, back_y))
 
     # File selection button
     select_rect = pygame.Rect(LEFT_MARGIN, 100, 200, 40)
@@ -245,6 +314,11 @@ def run_sf2_selection():
                 return
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = ev.pos
+                
+                # Check for back button click
+                back_rect = pygame.Rect(SCREEN_WIDTH - 100 - dropdown_padding, dropdown_padding, 80, button_height)
+                if back_rect.collidepoint(mx, my):
+                    return 'menu'  # Return to main menu
                 
                 if select_rect.collidepoint(mx, my):
                     # Open file dialog (you might need to implement this differently)
@@ -310,10 +384,10 @@ def run_mapping_screen():
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = ev.pos
                 # Back and Save buttons
-                back_rect = pygame.Rect(LEFT_MARGIN, SCREEN_HEIGHT - 60, 120, 36)
+                back_rect = pygame.Rect(SCREEN_WIDTH - 90 - dropdown_padding, dropdown_padding, 80, button_height)
                 save_rect = pygame.Rect(LEFT_MARGIN + 140, SCREEN_HEIGHT - 60, 120, 36)
                 if back_rect.collidepoint(mx, my):
-                    return
+                    return 'menu'  # Return to main menu
                 if save_rect.collidepoint(mx, my):
                     # write selections into mapped_notes
                     for t in targets:
@@ -382,14 +456,20 @@ def run_mapping_screen():
             txt = font.render(text, True, (0,0,0))
             screen.blit(txt, (cell_x + 8, cell_y + 10))
 
-        # buttons
-        back_rect = pygame.Rect(LEFT_MARGIN, SCREEN_HEIGHT - 60, 120, 36)
+        # Draw back button in top-right corner
+        back_rect = pygame.Rect(SCREEN_WIDTH - 90 - dropdown_padding, dropdown_padding, 80, button_height)
+        pygame.draw.rect(screen, (200,200,200), back_rect)
+        pygame.draw.rect(screen, (0,0,0), back_rect, 1)
+        back_text = font.render("Back", True, (0,0,0))
+        back_x = back_rect.x + (back_rect.w - back_text.get_width()) // 2
+        back_y = back_rect.y + (back_rect.h - back_text.get_height()) // 2
+        screen.blit(back_text, (back_x, back_y))
+
+        # Bottom buttons
         save_rect = pygame.Rect(LEFT_MARGIN + 140, SCREEN_HEIGHT - 60, 120, 36)
         play_rect = pygame.Rect(SCREEN_WIDTH - 140, SCREEN_HEIGHT - 60, 120, 36)
-        pygame.draw.rect(screen, (200,100,100), back_rect)
         pygame.draw.rect(screen, (100,200,100), save_rect)
         pygame.draw.rect(screen, (120,160,240), play_rect)
-        screen.blit(font.render('Back', True, (0,0,0)), (back_rect.x + 30, back_rect.y + 8))
         screen.blit(font.render('Save', True, (0,0,0)), (save_rect.x + 30, save_rect.y + 8))
         screen.blit(font.render('Play Test', True, (0,0,0)), (play_rect.x + 8, play_rect.y + 8))
 
@@ -421,7 +501,9 @@ while True:
             run_sf2_selection()
         
         # Then go to mapping screen
-        run_mapping_screen()
+        mapping_result = run_mapping_screen()
+        if mapping_result == 'menu':
+            continue  # Go back to menu
         break
 
 app_active = True
@@ -445,8 +527,16 @@ while app_active:
                 running = False
                 app_active = False
                 exit_reason = 'quit'
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F11 or (event.key == pygame.K_RETURN and event.mod & pygame.KMOD_ALT):
+                    toggle_fullscreen()
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
+                # Check for back button click
+                back_rect = pygame.Rect(SCREEN_WIDTH - 100 - dropdown_padding, dropdown_padding, 80, dropdown_h)
+                if back_rect.collidepoint(mx, my):
+                    running = False
+                    exit_reason = 'menu'
                 # Dropdown rect
                 dropdown_rect = pygame.Rect(dropdown_x, dropdown_y, dropdown_w, dropdown_h)
                 if dropdown_rect.collidepoint(mx, my):
@@ -474,22 +564,41 @@ while app_active:
         # White background
         screen.fill((255, 255, 255))
 
+        # Calculate UI positions based on current screen size
+        dropdown_x, dropdown_y, dropdown_w, dropdown_h = calculate_ui_dimensions()
+
+        # Draw centered title
+        title_font = pygame.font.SysFont(None, 40)
+        title = title_font.render('Music Sheet Mover', True, (0, 0, 0))
+        title_y = dropdown_y - 60
+        screen.blit(title, ((SCREEN_WIDTH - title.get_width())//2, title_y))
+
         # Draw dropdown (MIDI file selector)
         dropdown_rect = pygame.Rect(dropdown_x, dropdown_y, dropdown_w, dropdown_h)
         pygame.draw.rect(screen, (240,240,240), dropdown_rect)
         pygame.draw.rect(screen, (0,0,0), dropdown_rect, 2)
         sel_text = selected_midi if selected_midi else 'No MIDI files'
-        txt = font.render(f'MIDI: {sel_text}', True, (0,0,0))
-        screen.blit(txt, (dropdown_x + 6, dropdown_y + 6))
+        txt = font.render(f'Selected: {sel_text}', True, (0,0,0))
+        txt_x = dropdown_x + (dropdown_w - txt.get_width()) // 2
+        screen.blit(txt, (txt_x, dropdown_y + (dropdown_h - txt.get_height()) // 2))
 
         if dropdown_open:
-            # draw list of files
-            for idx, fname in enumerate(midi_files):
+            # Calculate max visible items based on screen height
+            max_visible = min(len(midi_files), (SCREEN_HEIGHT - dropdown_y - dropdown_h - BOTTOM_MARGIN) // dropdown_h)
+            # Draw list background
+            list_bg = pygame.Rect(dropdown_x, dropdown_y + dropdown_h, dropdown_w, max_visible * dropdown_h)
+            pygame.draw.rect(screen, (255, 255, 255), list_bg)
+            pygame.draw.rect(screen, (0, 0, 0), list_bg, 1)
+            # Draw list items
+            for idx, fname in enumerate(midi_files[:max_visible]):
                 item_rect = pygame.Rect(dropdown_x, dropdown_y + (idx+1) * dropdown_h, dropdown_w, dropdown_h)
-                pygame.draw.rect(screen, (255,255,255), item_rect)
+                if fname == selected_midi:  # Highlight selected item
+                    pygame.draw.rect(screen, (200, 230, 255), item_rect)
                 pygame.draw.rect(screen, (0,0,0), item_rect, 1)
                 item_txt = font.render(fname, True, (0,0,0))
-                screen.blit(item_txt, (item_rect.x + 6, item_rect.y + 6))
+                txt_x = item_rect.x + (item_rect.w - item_txt.get_width()) // 2
+                txt_y = item_rect.y + (item_rect.h - item_txt.get_height()) // 2
+                screen.blit(item_txt, (txt_x, txt_y))
 
         # Draw horizontal lines and key labels
         line_spacing = (SCREEN_HEIGHT - TOP_MARGIN - BOTTOM_MARGIN) / NUM_KEYS
@@ -557,10 +666,22 @@ while app_active:
 
         prev_playing = playing_pitches
 
-        # Draw current time and total duration
+        # Draw current time and total duration (top-left)
         time_text = f"Time: {current_time:.2f} / {midi_end_time:.2f} s"
-        label = font.render(time_text, True, (0,0,0))
-        screen.blit(label, (SCREEN_WIDTH - 250, 10))
+        time_bg_rect = pygame.Rect(dropdown_padding, dropdown_padding, time_display_width, dropdown_h)
+        pygame.draw.rect(screen, (240,240,240), time_bg_rect)
+        pygame.draw.rect(screen, (0,0,0), time_bg_rect, 1)
+        time_label = font.render(time_text, True, (0,0,0))
+        screen.blit(time_label, (time_bg_rect.x + 6, time_bg_rect.y + 6))
+
+        # Draw back button (top-right)
+        back_rect = pygame.Rect(SCREEN_WIDTH - 100 - dropdown_padding, dropdown_padding, 80, dropdown_h)
+        pygame.draw.rect(screen, (200,200,200), back_rect)
+        pygame.draw.rect(screen, (0,0,0), back_rect, 1)
+        back_text = font.render("Back", True, (0,0,0))
+        text_x = back_rect.x + (back_rect.w - back_text.get_width()) // 2
+        text_y = back_rect.y + (back_rect.h - back_text.get_height()) // 2
+        screen.blit(back_text, (text_x, text_y))
 
         pygame.display.flip()
 
